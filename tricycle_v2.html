@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Tricycle</title>
+  <style>
+    body {background: #d3e0d1;}
+    canvas { background: #808f77; display: block; margin: 20px auto; border-radius: 15 px; }
+    /* Modal overlay: covers the whole page with a semi-transparent black background */
+    #modalOverlay {
+      display: none; /* Start hidden */
+      position: fixed; /* Stays in place even when you scroll */
+      top: 0; left: 0; right: 0; bottom: 0; /* Full screen */
+      background: rgba(0,0,0,0.5); /* Black, but see-through */
+      z-index: 1000; /* Make sure it’s on top of everything else */
+    }
+
+    /* Modal box: the white popup window */
+    #modalBox {
+      background: #fff; /* White background */
+      padding: 24px; /* Space inside the box */
+      border-radius: 8px; /* Rounded corners */
+      width: 300px; /* Fixed width */
+      margin: 100px auto; /* Center horizontally, space from top */
+      position: relative; /* Needed for positioning child elements */
+      top: 100px; /* Push down from the very top */
+      box-shadow: 0 4px 16px rgba(0,0,0,0.2); /* Soft shadow */
+    }
+
+    #modalBox input[type="checkbox"] { /* absolutely no idea how this works we just trust */
+        display: inline-block !important;
+        width: auto !important;
+        margin: 0 5px 0 0; /* optional spacing */
+        vertical-align: middle;
+    }
+
+    /* Style for all input fields inside the modal */
+    #modalBox input {
+      display: block; /* Each input on its own line */
+      width: 100%; /* Fill the modal width */
+      margin-bottom: 12px; /* Space below each input */
+      padding: 8px; /* Space inside the input */
+      font-size: 1em; /* Normal text size */
+    }
+
+    /* Container for the OK and Cancel buttons */
+    #modalBox .buttons {
+      text-align: right; /* Align buttons to the right */
+    }
+
+    /* Style for the OK and Cancel buttons */
+    #modalBox button {
+      margin-left: 8px; /* Space between buttons */
+      padding: 6px 16px; /* Space inside buttons */
+    }
+
+    /* Style for the output area */
+    #outputArea {
+      margin-top: 20px;
+      font-family: Arial, sans-serif;
+      font-size: 1.1em;
+      color: #333;
+      white-space: pre-line; /* Keep line breaks */
+    }
+    #gameCanvas{
+        border-radius: 15px;
+        display: flex;
+        align-items: center;
+        margin-left: auto;
+        margin-right: auto;
+    } 
+    #rowOfButtons {
+        display: flex;
+        justify-content: center;
+        gap: 10px; /* space between buttons */
+        margin: 10px 0; /*short hand for all directions*/
+    }
+  </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="500" height="600"></canvas>
+    <script src="grid_puzzle.js"></script> <!-- src means source-->
+    <!-- Main button that opens the popup modal -->
+
+    <div id="rowOfButtons">
+        <button onclick="openModal()">Settings</button>
+        <button onclick="undo()">Undo</button>
+        <button onclick="resetGame()">Reset</button>
+        <button onclick="scramble(126)">Scramble</button>
+    </div>
+
+    <!-- Modal overlay: covers the page when active -->
+    <div id="modalOverlay">
+        <!-- Modal box: the popup window -->
+        <div id="modalBox">
+            <h2>Change Settings</h2>
+            <label for="colorSelect">Choose color theme:</label>
+            <select id="colorSelect">
+                <option value="white">White</option>
+                <option value="green">Green</option>
+                <option value="checkered">Checkered</option>
+            </select>
+            <label for="rows"> Number of Rows:</label>
+            <input type="number" id="rows" name="rows" value="3" min="3" max="6" placeholder="Enter a number between 3 and 6">
+
+            <label for="columns">Number of Columns:</label>
+            <input type="number" id="columns" name="columns" value="3" min="3" max="6" placeholder="Enter a number between 3 and 6">
+            <div id="lockedField">
+                <label for="lockedInput">Locked Boxes (comma separated):</label>
+                <input type="text" id="lockedInput" placeholder="e.g. 8, 12, 15">
+            </div>
+            <div id="rotateField">
+                <label for="rotateCheckbox">
+                    Rotate Mode?
+                    <input type="checkbox" id="rotateCheckbox"/>
+                </label>
+            </div>
+            <div id="invalid"></div>
+            <div id="invalid2"></div>
+            <!-- Button row: Cancel and OK -->
+            <div class="buttons">
+                <button onclick="closeModal()">Cancel</button>
+                <button onclick="okModal()">Start Game</button>
+            </div>
+        </div>
+    </div>
+
+  <!-- Output area where the entered info will be displayed -->
+  <div id="outputArea"></div>
+  
+  <script>
+    // -- Variable Declarations
+    let CELL_SIZE = 180;
+    let MARGIN = 10;
+    let rows = 3;
+    let columns = 3;
+    let SCREEN_WIDTH = columns * (CELL_SIZE + MARGIN) + MARGIN;
+    let SCREEN_HEIGHT = rows * (CELL_SIZE + MARGIN) + 100;
+    let ROTATE_MODE = false;
+    let COLOR_MODE = "white";
+
+    // -- Note that all the colour declarations are nonsensical 
+    const GRAY = "#ccc";
+    const WHITE = "#a5c79b";
+    const LIGHT_GRAY = "#f0ecdd";
+    const DARK_LIGHT_GRAY = "#dbd7c7";
+    const RED = '#935454';
+    const BLUE = "#94b38b";
+    const BLACK = "#4b5446";
+    const FONT = "bold 42px Arial";
+    const SMALL_FONT = "bold 26px Arial";
+    const FONT_MSG = "bold 32px Arial";
+
+    // --- State ---
+    let grid = [];
+    let selection = [];
+    let dragging = false;
+    let message = "Drag exactly 3 in row or column to cycle. \nPress [S] to scramble, [Q] to quit.";
+    let locked = new Set(["1,1"]); // Example: lock top-left cell
+    let moveCount = 0;
+    let rotation = {};
+    let gridHistory = [];
+    let rotationHistory = [];
+    let animations = [];
+    let animatingCells = [];
+
+    // --- Resize Canvas ---
+    function resizeCanvas(){
+        const canvas = document.getElementById('gameCanvas');
+        SCREEN_WIDTH = columns * (CELL_SIZE + MARGIN) + MARGIN;
+        SCREEN_HEIGHT = rows * (CELL_SIZE + MARGIN) + MARGIN * 5;
+        canvas.width = SCREEN_WIDTH;
+        canvas.height = SCREEN_HEIGHT
+    }    
+
+    // --- Initialize Grid ---
+    function initGrid(r = rows, c = columns, lockedCells = []) {
+        grid = [];
+        for (let i = 0; i < r; i++) {
+            let row = [];
+            for (let j = 0; j < c; j++) {
+                row.push(1 + i * c + j);
+            }
+            grid.push(row);
+        }
+
+        // Set locked cells
+        locked = new Set(lockedCells.map(([i, j]) => `${i},${j}`));
+        // Initialize rotation
+        if (ROTATE_MODE) {
+            rotation = {};
+            for (let row of grid) {
+                for (let num of row) {
+                    rotation[num] = 0;
+                }
+            }
+        }
+    }
+
+    function isAnimatingCell(r, c) {
+        return animatingCells.some(([row, col]) => row === r && col === c);
+    }
+
+    function ascertainColour(i, j, num){
+        let color;
+        const row = Math.floor((num - 1) / columns);
+        const col = (num - 1) % columns;
+        if (locked != [] && locked.has(`${i},${j}`)) {
+            color = RED;
+        } 
+        if (COLOR_MODE == "green"){
+            if ((row+col)% 2 === 0){
+                if (selection.some(sel => sel[0] === i && sel[1] === j)) {
+                    color = BLUE;
+                }
+                else{
+                    color = WHITE;
+                }
+            }
+        }
+        if (COLOR_MODE == "white"){
+            if (selection.some(sel => sel[0] === i && sel[1] === j)) {
+                color = DARK_LIGHT_GRAY;
+            }
+            else{
+                color = LIGHT_GRAY;
+            }
+        }
+        if (COLOR_MODE == "checkered"){
+            if ((row+col)% 2 === 0){
+                if (selection.some(sel => sel[0] === i && sel[1] === j)) {
+                    color = BLUE;
+                }
+                else{
+                    color = WHITE;
+                }
+            }
+            else{
+                if (selection.some(sel => sel[0] === i && sel[1] === j)) {
+                    color = DARK_LIGHT_GRAY;
+                }
+                else{
+                    color = LIGHT_GRAY;
+                }
+            }
+        }
+        if (locked.has(`${i},${j}`)) {
+            color = RED;
+        } 
+        return(color); 
+    }
+
+    // draws cell, if it needs an arbitrary location it uses drawCell
+    function drawCell(ctx, row, col, value, x=MARGIN + col * (CELL_SIZE + MARGIN), y = MARGIN + row * (CELL_SIZE + MARGIN), cell_rotation = (rotation[value] || 0) * Math.PI / 180){
+        // Cell color logic
+        let color = ascertainColour(row, col, value);
+
+        // Draw cell
+        ctx.shadowColor = "rgba(0, 0, 0, 0.35)";  // subtle black shadow with low opacity
+        ctx.shadowBlur = 6;
+        ctx.shadowOffsetX = 4;
+        ctx.shadowOffsetY = 4;
+
+        ctx.fillStyle = color;
+        roundRect(ctx, x, y, CELL_SIZE, CELL_SIZE, 15, true, false);
+
+        ctx.shadowColor = "transparent";
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 0;
+
+        // Draw border
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        roundRect(ctx, x, y, CELL_SIZE, CELL_SIZE, 15, false, true);
+
+        // Draw number (with rotation if ROTATE_MODE)
+        ctx.save();
+
+        ctx.font = FONT;
+        if ((rows + columns) >= 9){
+            ctx.font = SMALL_FONT;
+        }
+
+        ctx.fillStyle = BLACK;
+        if (color == RED){
+            ctx.fillStyle = "#f0e6e6";
+        }
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+
+        let cx = Math.round(x + CELL_SIZE / 2);
+        let cy = Math.round(y + CELL_SIZE / 2);
+        if (ROTATE_MODE) {
+            ctx.translate(cx, cy);
+            ctx.rotate(cell_rotation);
+            ctx.fillText(value, 0, 0);
+            ctx.restore();
+
+            // Draw dot for rotation
+            if (!locked.has(`${row},${col}`)) {
+                // let rot = rotation[value] || 0;
+                let dotOffset = CELL_SIZE / 2 - 10;
+                let dx = 0, dy = 0;
+                // if (rot === 0)       { dx = 0; dy = -dotOffset; }
+                // else if (rot === 90) { dx = -dotOffset; dy = 0; }
+                // else if (rot === 180){ dx = 0; dy = dotOffset; }
+                // else if (rot === 270){ dx = dotOffset; dy = 0; }
+                dx = Math.sin(cell_rotation) * dotOffset;
+                dy = -Math.cos(cell_rotation) * dotOffset;
+                ctx.beginPath();
+                ctx.arc(cx + dx, cy + dy, 5, 0, 2 * Math.PI);
+                ctx.fillStyle = BLACK;
+                ctx.fill();
+            }
+        } 
+        else {
+            ctx.fillText(value, cx, cy);
+            ctx.restore();
+        }
+    }
+    // --- Drawing ---
+    function draw() {
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+        ctx.imageSmoothingEnabled = false;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Draw grid
+        for (let i = 0; i < rows; i++) {
+            for (let j = 0; j < columns; j++) {
+                if (isAnimatingCell(i, j)) continue;
+                
+                let num = grid[i][j];
+                drawCell(ctx, i, j, num);
+            }
+        }
+
+        // Draw message
+        // Run animation overlays
+        updateAnimations(ctx);
+
+        ctx.font = FONT_MSG;
+        ctx.fillStyle = BLACK;
+        ctx.textAlign = "left";
+        ctx.fillText(`Moves: ${moveCount}`, SCREEN_WIDTH/2 - 65, Math.round(SCREEN_HEIGHT - MARGIN)-2);
+    }
+
+    function updateAnimations(ctx) {
+        const now = performance.now();
+
+        animations = animations.filter(anim => {
+            const elapsed = now - anim.startTime;
+            const progress = Math.min(elapsed / anim.duration, 1);
+
+            // Animate cycle
+            if (anim.type === "cycle") {
+            anim.cells.forEach(([r, c], i) => {
+                const [targetR, targetC] = anim.cells[(i + 1) % 3];
+                const value = anim.from[i];
+                const startX = MARGIN + c * (CELL_SIZE + MARGIN);
+                const startY = MARGIN + r * (CELL_SIZE + MARGIN);
+                const endX = MARGIN + targetC * (CELL_SIZE + MARGIN);
+                const endY = MARGIN + targetR * (CELL_SIZE + MARGIN);
+                
+                let angle = (rotation[value] || 0) * Math.PI / 180;
+                if (ROTATE_MODE){
+                    const fromAngle = anim.rotationFrom[i];
+                    const toAngle = anim.rotationTo[i];
+                    let delta = toAngle - fromAngle;
+                    if (delta > 180) delta -= 360;
+                    if (delta < -180) delta += 360;
+                    angle = (fromAngle + delta * progress + 360) % 360 * Math.PI / 180;
+                }
+
+                const currentX = startX + (endX - startX) * progress;
+                const currentY = startY + (endY - startY) * progress;
+                drawCell(ctx, r, c, value, currentX, currentY, angle);
+            });
+            }
+
+            // End of animation: update grid
+            if (progress === 1) {
+                anim.cells.forEach(([r, c], i) => {
+                    grid[r][c] = anim.to[i];
+                    if (ROTATE_MODE) {
+                        rotation[anim.to[i]] = (rotation[anim.to[i]] + 180) % 360;
+                    }
+                });
+                moveCount++;
+                message = "3-cycle complete.";
+                animatingCells = [];
+                return false; // remove animation
+            }
+
+            return true; // keep animating
+        });
+    }
+
+    // Helper: Draw rounded rectangle
+    function roundRect(ctx, x, y, w, h, r, fill, stroke) {
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.lineTo(x + w - r, y);
+        ctx.arcTo(x + w, y, x + w, y + r, r);
+        ctx.lineTo(x + w, y + h - r);
+        ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+        ctx.lineTo(x + r, y + h);
+        ctx.arcTo(x, y + h, x, y + h - r, r);
+        ctx.lineTo(x, y + r);
+        ctx.arcTo(x, y, x + r, y, r);
+        ctx.closePath();
+        if (fill) ctx.fill();
+        if (stroke) ctx.stroke();
+    }
+    
+
+    // Helper function to parse locked cells
+    function parseLockedCells(input, rows, columns){
+        if (input == ''){
+            return([]);
+        }
+        const parts = input.split(',') // trimming input
+        .map(s => parseInt(s.trim()));
+
+        const maxCell = rows*columns;
+        let hasInvalid = false;
+
+        // Parse and validate numbers (I have no idea how this part works thanks AI!)
+        const numbers = parts.map(s => {
+            const n = parseInt(s);
+            if (isNaN(n) || n < 1 || n > maxCell) {
+            hasInvalid = true;
+            return null;
+            }
+            return n;
+        }).filter(n => n !== null);
+        console.log(parts);
+        if (hasInvalid) return true; // Returns true if there are any invalid
+
+        const lockedList = numbers.map(n => [
+        Math.floor((n - 1) / columns),
+        (n - 1) % columns
+        ]);
+
+        return(lockedList);
+    }    
+    // Function to show the popup modal
+    function openModal() {
+      document.getElementById('modalOverlay').style.display = 'block'; // Show overlay
+    }
+
+    // Function to hide the popup modal
+    function closeModal() {
+        document.getElementById('modalOverlay').style.display = 'none'; // Hide overlay
+    }
+
+    // Function for OK button: reads input values, displays them on page, then closes modal
+    function okModal() {
+        document.getElementById('invalid').textContent = '';
+        document.getElementById('invalid2').textContent = '';
+
+        // make trial variables to make sure they're ok!
+        const rows_trial = Number(document.getElementById('rows').value.trim());
+        const columns_trial = Number(document.getElementById('columns').value.trim());
+        
+
+        let lockedList = parseLockedCells(document.getElementById('lockedInput').value.trim(), rows, columns);
+        if (rows_trial > 6 || columns_trial > 6 || rows_trial < 3 || columns_trial < 3){
+            document.getElementById('invalid').textContent = 'Values must be between 3 and 6';
+            return;
+        }
+        if (lockedList == true){
+            document.getElementById('invalid2').textContent = 'Locked boxes must be within range';
+            return;
+        }
+
+        rows = rows_trial;
+        columns = columns_trial;
+        ROTATE_MODE = (document.getElementById('rotateCheckbox')).checked;
+        COLOR_MODE = (document.getElementById('colorSelect')).value;
+
+        CELL_SIZE = 180*6/(rows+columns);
+        resizeCanvas();
+        resetGame();
+
+        // Close the modal after displaying the info
+        closeModal();
+        draw();
+    }
+
+    // helper function: what is the cell under my mouse?
+    function getCellUnderMouse(x, y) {
+        for (let i = 0; i < rows; i++) {
+            for (let j = 0; j < columns; j++) {
+                const cx = MARGIN + j * (CELL_SIZE + MARGIN);
+                const cy = MARGIN + i * (CELL_SIZE + MARGIN);
+                if (
+                    x >= cx && x < cx + CELL_SIZE &&
+                    y >= cy && y < cy + CELL_SIZE
+                ) {
+                    return [i, j];
+                }
+            }
+        }
+        return null;
+    }
+    function addToSelection(cell) {
+        const [r, c] = cell;
+        if (locked.has(`${r},${c}`)) return false;
+        if (selection.some(([sr, sc]) => sr === r && sc === c)) return false;
+
+        if (selection.length === 0) {
+            selection.push(cell);
+            return true;
+        }
+
+        const rowsOnly = selection.map(([r, _]) => r);
+        const colsOnly = selection.map(([_, c]) => c);
+        const isRowAligned = rowsOnly.every(row => row === r);
+        const isColAligned = colsOnly.every(col => col === c);
+
+        if (!isRowAligned && !isColAligned) return false;
+
+        const newSelection = [...selection, cell];
+        newSelection.sort((a, b) => (isRowAligned ? a[1] - b[1] : a[0] - b[0]));
+
+        // Ensure no locked cell between selections
+        if (isRowAligned) {
+            const row = r;
+            const cols = newSelection.map(([, c]) => c);
+            for (let i = 0; i < cols.length - 1; i++) {
+                for (let gap = cols[i] + 1; gap < cols[i + 1]; gap++) {
+                    if (locked.has(`${row},${gap}`)) return false;
+                }
+            }
+        } else {
+            const col = c;
+            const rows = newSelection.map(([r]) => r);
+            for (let i = 0; i < rows.length - 1; i++) {
+                for (let gap = rows[i] + 1; gap < rows[i + 1]; gap++) {
+                    if (locked.has(`${gap},${col}`)) return false;
+                }
+            }
+        }
+
+        selection.push(cell);
+        return true;
+    }
+
+    // helper function: clears selection
+    function clearSelection(){
+        selection = [];
+    }
+
+    function perform3Cycle() {
+        if (selection.length !== 3) {
+            message = "Select exactly 3 cells in a row or column!";
+            return;
+        }
+
+        if (selection.some(([r, c]) => locked.has(`${r},${c}`))) {
+            message = "Cannot move locked cells!";
+            return;
+        }
+
+        const rowsOnly = selection.map(([r]) => r);
+        const colsOnly = selection.map(([, c]) => c);
+        const isRow = rowsOnly.every(row => row === rowsOnly[0]);
+        const isCol = colsOnly.every(col => col === colsOnly[0]);
+
+        if (!isRow && !isCol) {
+            message = "Cells must be in same row or column!";
+            return;
+        }
+
+        const values = selection.map(([r, c]) => grid[r][c]);
+        const rotated = [values[2], values[0], values[1]];
+
+        const prevGrid = JSON.parse(JSON.stringify(grid));
+        const prevRotation = JSON.parse(JSON.stringify(rotation));
+
+        gridHistory.push(prevGrid);
+        rotationHistory.push(prevRotation);
+
+        const startTime = performance.now();
+        const duration = 200;
+        animatingCells = [...selection];
+        animations.push({
+            type: "cycle",
+            cells: [...selection],
+            from: [...values],
+            to: [...rotated],
+            rotationFrom: selection.map(([r, c]) => rotation[grid[r][c]] || 0), // adds rotation
+            rotationTo: selection.map(([r, c]) => ( (rotation[grid[r][c]] || 0) + 180 ) % 360), // ^
+            startTime,
+            duration,
+        });
+        
+        clearSelection();
+    }
+
+
+    function undo() {
+        console.log(gridHistory);
+        if (gridHistory.length > 0) {
+            grid = gridHistory.pop();
+            if (ROTATE_MODE) rotation = rotationHistory.pop();
+            moveCount = Math.max(0, moveCount - 1);
+            message = "Undo performed.";
+        } else {
+            message = "Nothing to undo!";
+        }
+        draw();
+    }
+
+    function resetGame() {
+        initGrid(rows, columns, Array.from(locked).map(s => s.split(',').map(Number)));
+        moveCount = 0;
+        gridHistory = [];
+        rotationHistory = [];
+        message = "Game reset.";
+        draw();
+    }
+
+    function scramble(times = 20) {
+        let attempts = 0;
+        resetGame();
+        while (times > 0 && attempts < 1000) {
+            attempts++;
+            let indices;
+            if (Math.random() < 0.5 && columns >= 3) {
+                const r = Math.floor(Math.random() * rows);
+                const start = Math.floor(Math.random() * (columns - 2));
+                indices = [[r, start], [r, start + 1], [r, start + 2]];
+            } else if (rows >= 3) {
+                const c = Math.floor(Math.random() * columns);
+                const start = Math.floor(Math.random() * (rows - 2));
+                indices = [[start, c], [start + 1, c], [start + 2, c]];
+            }
+
+            if (indices.some(([r, c]) => locked.has(`${r},${c}`))) continue;
+
+            const vals = indices.map(([r, c]) => grid[r][c]);
+            const rotated = [vals[2], vals[0], vals[1]];
+
+            indices.forEach(([r, c], i) => {
+                grid[r][c] = rotated[i];
+                if (ROTATE_MODE) {
+                    rotation[rotated[i]] = (rotation[rotated[i]] + 180) % 360;
+                }
+            });
+
+            times--;
+        }
+        message = "Scrambled grid.";
+    }
+
+    // Initial drawing 
+
+    resizeCanvas();
+    initGrid(3, 3, []);
+    draw();
+
+
+    const keysPressed = {};
+
+    window.addEventListener('keydown', (e) => {
+    keysPressed[e.key.toLowerCase()] = true;
+    });
+
+    window.addEventListener('keyup', (e) => {
+    keysPressed[e.key.toLowerCase()] = false;
+    });
+
+    const canvas = document.getElementById('gameCanvas');
+    canvas.addEventListener('mousedown', (e) => {
+        dragging = true;
+        selection = [];  // Clear previous selection when starting a drag
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        const cell = getCellUnderMouse(x, y);
+        if (cell && !keysPressed[' ']) {  // only add if space NOT held
+            addToSelection(cell);
+            draw();
+        }
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+        if (!dragging) return; //This is pointless if its not dragging!
+
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        const cell = getCellUnderMouse(x, y);
+
+        if (cell) {
+            if (!keysPressed[' ']) {  // skip adding if space is held
+                if (addToSelection(cell)) {
+                    draw();
+                }
+            }
+        }
+    });
+
+    window.addEventListener('mouseup', (e) => {
+        dragging = false;
+        if (selection.length === 3) {
+            perform3Cycle();
+            clearSelection();
+            draw();
+        } else if (selection.length > 0) {
+            message = "Select exactly 3 cells!";
+            console.log("Before clearSelection, selection:", selection);
+            clearSelection();
+            console.log("After clearSelection, selection:", selection);
+            draw();
+        }
+    });
+
+    // Your game initialization and loop...
+    function gameLoop(cooldown){
+
+        if (keysPressed['s']){
+            console.log('scramble');
+            resetGame();
+            scramble(200);
+        }
+        if (keysPressed['r']){
+            console.log('reset')
+            resetGame();
+        }
+        draw();
+        requestAnimationFrame(gameLoop);
+    }
+    gameLoop();
+  </script>
+</body>
+</html>
